@@ -13,6 +13,12 @@ use PhpSigep\Services\SoapClient\Real;
 use PhpSigep\Bootstrap;
 use PhpSigep\Model\AccessData;
 use Symfony\Component\Config\Definition\Exception\Exception;
+use DVDoug\BoxPacker\Packer;
+use DVDoug\BoxPacker\ItemList;
+use DVDoug\BoxPacker\VolumePacker;
+use Bleez\Correios\Model\BoxPacker\Item;
+use Bleez\Correios\Model\BoxPacker\Box;
+
 
 /**
  * Class Correios
@@ -117,6 +123,7 @@ class Correios extends \Magento\Shipping\Model\Carrier\AbstractCarrierOnline imp
         $this->_rateResultFactory = $rateResultFactory;
         $this->_helper = $helper;
         $this->_helperSigep = $helperSigep;
+
         parent::__construct(
             $scopeConfig,
             $rateErrorFactory,
@@ -161,36 +168,63 @@ class Correios extends \Magento\Shipping\Model\Carrier\AbstractCarrierOnline imp
             //Inicia Lib
             $this->_initSigep();
 
-            //Dimensões
-            $dimensions = $this->_createDimensions($request);
+            $quote = $this->getQuote($request->getAllItems());
 
-            //Servicos
-            $services = $this->_getServicos($request, $dimensions);
+            if(!$quote) return false;
+
+            $services = $this->_getServices($request, $quote);
 
             $result = $this->_rateResultFactory->create();
 
             $allowed_services = explode(',', $this->getConfigData('types'));
-            foreach($services->getResult() as $service){
-                if($service->getErroCodigo() == 0 && in_array((string)$service->getServico()->getCodigo(), $allowed_services)) {
-                    if($this->getConfigData('free_shipping_enabled') && $this->getConfigData('free_shipping_only') && $service->getServico()->getCodigo() != $this->getConfigData('free_shipping_service')){
-                        continue;
+
+            $shippingRates = array();
+
+            foreach ($services as $s) {
+                foreach($s->getResult() as $service) {
+                    if ($service->getErroCodigo() == 0 && in_array((string)$service->getServico()->getCodigo(), $allowed_services)) {
+                        if ($this->getConfigData('free_shipping_enabled') && $this->getConfigData('free_shipping_only') && $service->getServico()->getCodigo() != $this->getConfigData('free_shipping_service')) {
+                            continue;
+                        }
+                        if ($this->getConfigData('free_shipping_enabled') && $service->getServico()->getCodigo() == $this->getConfigData('free_shipping_service') && $request->getFreeShipping()) {
+                            $shippingRates[$service->getServico()->getCodigo()]["valor"] = 0;
+                            $shippingRates[$service->getServico()->getCodigo()]["prazo"] = $this->_calculateShippingDays($service);
+                            $shippingRates[$service->getServico()->getCodigo()]["nome"] = $service->getServico()->getNome();
+                        } else {
+                            if (!isset($shippingRates[$service->getServico()->getCodigo()])) {
+                                $shippingRates[$service->getServico()->getCodigo()]["valor"] = 0;
+                                $shippingRates[$service->getServico()->getCodigo()]["prazo"] = 0;
+                                $shippingRates[$service->getServico()->getCodigo()]["nome"] = $service->getServico()->getNome();
+                            }
+
+                            $shippingRates[$service->getServico()->getCodigo()]["valor"] += $service->getValor();
+
+                            if ($this->_calculateShippingDays($service) > $shippingRates[$service->getServico()->getCodigo()]["prazo"]) {
+                                $shippingRates[$service->getServico()->getCodigo()]["prazo"] = $this->_calculateShippingDays($service);
+                            }
+                        }
                     }
-                    $method = $this->_rateMethodFactory->create();
-                    $method->setCarrier('correios');
-                    $method->setCarrierTitle($this->getConfigData('name'));
-                    $method->setMethod($service->getServico()->getNome());
-                    if($this->getConfigData('free_shipping_enabled') && $service->getServico()->getCodigo() == $this->getConfigData('free_shipping_service') && $request->getFreeShipping()){
-                        $method->setMethodTitle($this->getConfigData('free_shipping_text') . sprintf($this->getConfigData('text_days'), $this->_calculateShippingDays($service)));
-                        $method->setPrice(0);
-                        $method->setCost(0);
-                    }else{
-                        $method->setMethodTitle($this->_getServiceName($service->getServico()->getCodigo()) . sprintf($this->getConfigData('text_days'), $this->_calculateShippingDays($service)));
-                        $method->setPrice($this->_calculatePrice($service->getValor()));
-                        $method->setCost($this->_calculatePrice($service->getValor()));
-                    }
-                    $method->setMethodDescription('Quantidade de fretes: '.$this->_qtdFretes);
-                    $result->append($method);
                 }
+            }
+
+            foreach ($shippingRates as $cod => $rate){
+                $method = $this->_rateMethodFactory->create();
+                $method->setCarrier('correios');
+                $method->setCarrierTitle($this->getConfigData('name'));
+                $method->setMethod($rate["nome"]);
+
+                if($rate["valor"] == 0){ //free shipping
+                    $method->setMethodTitle($this->getConfigData('free_shipping_text') . sprintf($this->getConfigData('text_days'), $this->_formatShippingDays($rate["prazo"])));
+                    $method->setPrice(0);
+                    $method->setCost(0);
+                } else {
+                    $method->setMethodTitle($this->_getServiceName($cod) . sprintf($this->getConfigData('text_days'), $this->_formatShippingDays($rate["prazo"])));
+                    $method->setPrice($rate["valor"]);
+                    $method->setCost($rate["valor"]);
+                }
+
+                $method->setMethodDescription('Quantidade de fretes: '.$this->_qtdFretes);
+                $result->append($method);
             }
 
             return $result;
@@ -199,6 +233,229 @@ class Correios extends \Magento\Shipping\Model\Carrier\AbstractCarrierOnline imp
             return false;
         }
 
+    }
+
+    protected function _getServices($request, $quote){
+        $services = array();
+        $limite = json_decode($this->_helper->getLimitSizes(), true);
+
+        $objectManager = \Magento\Framework\App\ObjectManager::getInstance();
+
+        foreach ($quote->getAllVisibleItems() as $item) {
+            $product = $objectManager->get('Magento\Catalog\Api\ProductRepositoryInterface')->get($item->getSku());
+
+            $altura = $product->getAltura();
+            $comprimento = $product->getComprimento();
+            $largura = $product->getLargura();
+            $peso = $product->getWeight();
+
+            if(!$altura || !$comprimento || !$largura || !$peso) return [];
+
+            if(!$this->_verificaTamanho($altura, $largura, $comprimento, $limite) || !$this->_verificaPeso($peso)){
+                return $services;
+            }
+
+            for($i = 0; $i < $item->getQty(); $i++ ){
+                $pacotes[] = array(
+                    "altura"      => $altura,
+                    "largura"     => $largura,
+                    "comprimento" => $comprimento,
+                    "peso"        => $peso * 100 //converto em g
+                );
+            }
+        }
+
+        //Divisão do frete
+        if($this->getConfigData('divisao_frete') && $this->getConfigData('format') != 3){
+            $numPacotes = count($pacotes);
+
+            do {
+                $temPacotes = false;
+
+                $box[] = new Box(
+                    'Pacote',
+                    $limite["maximo"]["altura"],
+                    $limite["maximo"]["largura"],
+                    $limite["maximo"]["comprimento"],
+                    0,
+                    $limite["maximo"]["altura"] - 5,
+                    $limite["maximo"]["largura"] - 5,
+                    $limite["maximo"]["comprimento"] - 5,
+                    $this->_helper->getLimitWeight() * 100 //converto em kg
+                );
+
+                $items = new ItemList();
+
+                for($i = 0; $i < $numPacotes; $i++) {
+                    if(!isset($pacotes[$i])) continue; //o pacote ja foi inserido
+
+                    $itemsAnterior = clone $items;
+                    $items->insert(new Item('Item '.$i, $pacotes[$i]["altura"], $pacotes[$i]["largura"], $pacotes[$i]["comprimento"], ceil($pacotes[$i]["peso"]), false));
+
+                    $volumePacker = new VolumePacker(end($box), $items);
+                    $packedBox = $volumePacker->pack();
+
+                    //verificações correios
+                    $ultrapassaMedidas = $packedBox->getUsedWidth() +
+                        $packedBox->getUsedLength() +
+                        $packedBox->getUsedDepth() +
+                        $pacotes[$i]["altura"] +
+                        $pacotes[$i]["largura"] +
+                        $pacotes[$i]["comprimento"] >
+                        $limite["maximo"]["soma"];
+
+                    $ultrapassaPeso = $packedBox->getWeight() + $pacotes[$i]["peso"] >
+                        $this->_helper->getLimitWeight() * 100;
+
+                    //deu errado, volto o estado anterior e continuo o loop
+                    if($ultrapassaMedidas || $ultrapassaPeso) {
+                        $items = clone $itemsAnterior;
+                    }
+                }
+
+                //fecho o pacote
+                $finalPackedBox[] = clone $packedBox;
+
+                //removo os itens que foram empacotados para checar se faltou algum pacote
+                $packedItems = $packedBox->getItems();
+                foreach ($packedItems as $packedItem) {
+                    $indexItem = (int) str_replace('Item ', '', $packedItem->getItem()->getDescription());
+                    unset($pacotes[$indexItem]);
+                }
+
+                if(count($pacotes) > 0)
+                    $temPacotes = true;
+
+            } while($temPacotes);
+        }
+
+        if(isset($finalPackedBox)){
+            $pacotes = array();
+            foreach ($finalPackedBox as $b){
+                $pacotes[] = array(
+                    "altura"      => $b->getUsedWidth(),
+                    "largura"     => $b->getUsedLength(),
+                    "comprimento" => $b->getUsedDepth(),
+                    "peso"        => $b->getWeight() / 100
+                );
+            }
+        }
+
+        $this->_qtdFretes = count($pacotes);
+
+        foreach ($pacotes as $pacote){
+            $dimensions = $this->_createDimensionsNew($pacote["altura"], $pacote["largura"], $pacote["comprimento"]);
+            $services[] = $this->_getService($request, $dimensions, $pacote["peso"]);
+        }
+
+        return $services;
+    }
+
+    /**
+     * Retorna servicos dos correios
+     * @param RateRequest $request
+     * @param \PhpSigep\Model\Dimensao $dimensions
+     * @return \PhpSigep\Services\Result
+     */
+    protected function _getService(RateRequest $request, Dimensao $dimensions, $peso){
+        $params = new CalcPrecoPrazo();
+        $params->setAccessData(new AccessDataHomologacao());
+        $params->setCepOrigem($request->getPostcode());
+        $params->setCepDestino($request->getDestPostcode());
+        $params->setServicosPostagem(ServicoDePostagem::getAll());
+        $params->setAjustarDimensaoMinima(true);
+        $params->setDimensao($dimensions);
+
+        $servicosAdicionais = array();
+
+        if ($this->getConfigData('aviso_recebimento')) {
+            $avisoDeRecebimento = new ServicoAdicional();
+            $avisoDeRecebimento->setCodigoServicoAdicional(ServicoAdicional::SERVICE_AVISO_DE_RECEBIMENTO);
+            $servicosAdicionais[] = $avisoDeRecebimento;
+        }
+
+        if ($this->getConfigData('mao_propria')) {
+            $maoPropria = new ServicoAdicional();
+            $maoPropria->setCodigoServicoAdicional(ServicoAdicional::SERVICE_MAO_PROPRIA);
+            $servicosAdicionais[] = $maoPropria;
+        }
+
+        if ($this->getConfigData('valor_declarado') && $request['package_value']) {
+            $valorDeclarado = new ServicoAdicional();
+            $valorDeclarado->setCodigoServicoAdicional(ServicoAdicional::SERVICE_VALOR_DECLARADO);
+            $valorDeclarado->setValorDeclarado($request['package_value']);
+            $servicosAdicionais[] = $valorDeclarado;
+        }
+
+        if($this->getConfigData('ect') && $this->getConfigData('password')){
+
+            $accessData = new AccessData();
+            $accessData->setUsuario($this->getConfigData('ect'));
+            $accessData->setSenha($this->getConfigData('password'));
+            $accessData->setCodAdministrativo($this->getConfigData('codigoadm'));
+            $params->setAccessData($accessData);
+
+        }
+
+        $params->setServicosAdicionais($servicosAdicionais);
+        //$params->setPeso($this->_calculateWeightShipping($request));
+        $params->setPeso($peso);
+
+        $phpSigep = new Real();
+        $this->_logger->debug(print_r($params, true));
+        return $phpSigep->calcPrecoPrazo($params);
+    }
+
+    /**
+     * Soma prazo de entrega do servico e coloca adicionais
+     * @param $service
+     * @return int
+     */
+    protected function _formatShippingDays($days){
+        if($this->getConfigData('servicesnames')){
+            return (int)$days+(int)$this->getConfigData('add_days');
+        }
+        return '';
+    }
+
+    protected function _createDimensionsNew($altura, $largura = null, $comprimento){
+        $dimensao = new Dimensao();
+        $dimensao->setTipo($this->getConfigData('format'));
+
+        if($this->getConfigData('format') == 3){
+            //Cilindro
+            $dimensao->setDiametro($largura);
+            $dimensao->setComprimento($comprimento);
+        }else{
+            //Caixa e envelope
+            $dimensao->setAltura($altura);
+            $dimensao->setComprimento($comprimento);
+            $dimensao->setLargura($largura);
+        }
+        return $dimensao;
+    }
+
+    protected function _verificaTamanho($altura, $largura = null, $comprimento, $limite){
+        if( ($altura <= ($limite["maximo"]["largura"]) && // Cilindro
+                $comprimento <= ($limite["maximo"]["comprimento"]) &&
+                $this->getConfigData('format') == 3) ||
+            ($largura <= ($limite["maximo"]["altura"]) && //Caixa e envelope
+                $altura <= ($limite["maximo"]["largura"]) &&
+                $comprimento <= ($limite["maximo"]["comprimento"]) &&
+                $altura + $largura + $comprimento <= ($limite["maximo"]["soma"]) &&
+                $this->getConfigData('format') != 3) ){
+            return true;
+        }
+
+        return false;
+
+    }
+
+    protected function _verificaPeso($peso){
+        if($peso > $this->_helper->getLimitWeight()){
+            return false;
+        }
+        return true;
     }
 
     /**
@@ -222,10 +479,38 @@ class Correios extends \Magento\Shipping\Model\Carrier\AbstractCarrierOnline imp
         $altura = 0;
         $comprimento = 0;
 
+        $limite = json_decode($this->_helper->getLimitSizes(), true);
+
         foreach($request->getAllItems() as $item){
-            $largura += $item->getLargura();
-            $altura += $item->getAltura();
-            $comprimento += $item->getComprimento();
+
+            $objectManager = \Magento\Framework\App\ObjectManager::getInstance();
+            $product = $objectManager->get('Magento\Catalog\Model\Product')->load($item->getProduct()->getId());
+
+            $largura += $product->getLargura() * $item->getQty();
+            $altura += $product->getAltura() * $item->getQty();
+            $comprimento += $product->getComprimento() * $item->getQty();
+
+            /**
+             * Verifica se as dimensões do produto cabem no mesmo pacote
+             */
+            for($pacotes = 1; $pacotes <= $item->getQty(); $pacotes++){
+                if( ($altura <= ($limite["maximo"]["largura"] * $pacotes) && // Cilindro
+                        $comprimento <= ($limite["maximo"]["comprimento"] * $pacotes) &&
+                        $this->getConfigData('format') == 3) ||
+                    ($largura <= ($limite["maximo"]["altura"] * $pacotes) && //Caixa e envelope
+                        $altura <= ($limite["maximo"]["largura"] * $pacotes) &&
+                        $comprimento <= ($limite["maximo"]["comprimento"] * $pacotes) &&
+                        $altura + $largura + $comprimento <= ($limite["maximo"]["soma"] * $pacotes) &&
+                        $this->getConfigData('format') != 3) ){
+                    $this->_qtdFretes = $pacotes;
+
+                    $largura /= $pacotes;
+                    $altura /= $pacotes;
+                    $comprimento /= $pacotes;
+
+                    break;
+                }
+            }
         }
 
         if($this->getConfigData('format') == 3){
@@ -336,19 +621,29 @@ class Correios extends \Magento\Shipping\Model\Carrier\AbstractCarrierOnline imp
             /**
              * Divide o peso pela quantidade de itens
              */
-            if ($request->getPackageWeight() > $this->_helper->getLimitWeight() || $request->getPackageQty() > 1) {
-                $shipWeight = 0;
-                for ($k = 1; $k <= $request->getPackageQty(); $k++) {
-                    if ($request->getPackageWeight() / $k <= $this->_helper->getLimitWeight()) {
-                        $shipWeight = $request->getPackageWeight() / $k;
-                        $this->_qtdFretes = $k;
-                        break;
+            if($request->getPackageQty() > $this->_qtdFretes){
+                if ($request->getPackageWeight() > $this->_helper->getLimitWeight() || $request->getPackageQty() > 1) {
+                    $shipWeight = 0;
+                    for ($k = 1; $k <= $request->getPackageQty(); $k++) {
+                        if ($request->getPackageWeight() / $k <= $this->_helper->getLimitWeight()) {
+                            $shipWeight = $request->getPackageWeight() / $k;
+                            /**
+                             * Verifico se a divisão de pacotes pelas dimensões é maior que a do peso
+                             */
+                            if($this->_qtdFretes < $k){
+                                $this->_qtdFretes = $k;
+                            }
+                            break;
+                        }
                     }
                 }
-                if ($shipWeight > 0) {
-                    $this->_logger->debug('2Peso: '.number_format($shipWeight, 2));
-                    return number_format($shipWeight, 2);
-                }
+            }else{
+                $shipWeight = $request->getPackageWeight() / $this->_qtdFretes;
+            }
+
+            if ($shipWeight > 0) {
+                $this->_logger->debug('2Peso: '.number_format($shipWeight, 2));
+                return number_format($shipWeight, 2);
             }
         }
 
@@ -417,6 +712,15 @@ class Correios extends \Magento\Shipping\Model\Carrier\AbstractCarrierOnline imp
     protected function _doShipmentRequest(\Magento\Framework\DataObject $request)
     {
         $this->setRequest($request);
+    }
+
+    protected function getQuote($items){
+        $objectManager = \Magento\Framework\App\ObjectManager::getInstance();
+        foreach ($items  as $item)
+        {
+            return $objectManager->get('Magento\Quote\Model\QuoteFactory')->create()->load($item->getQuoteId());
+        }
+        return false;
     }
 
 }
