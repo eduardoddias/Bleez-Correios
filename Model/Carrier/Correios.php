@@ -200,7 +200,7 @@ class Correios extends \Magento\Shipping\Model\Carrier\AbstractCarrierOnline imp
 
                             $priceService = $service->getValor();
                             if (isset($loadedService->fee) && !empty($loadedService->fee)) {
-                                $priceService += $service->getValor() + ($priceService * ($loadedService->fee / 100));
+                                $priceService += $priceService * ($loadedService->fee / 100);
                             }
 
                             $shippingRates[$service->getServico()->getCodigo()]["valor"] += $priceService;
