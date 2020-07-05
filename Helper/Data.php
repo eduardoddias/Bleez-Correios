@@ -126,4 +126,49 @@ class Data {
                 return 'caixa';
         }
     }
+
+    /**
+     * Remove array that already exists
+     * @param $array
+     * @param $key
+     * @return array
+     */
+    public function unique_multidim_array($array, $key) {
+        $temp_array = array();
+        $i = 0;
+        $key_array = array();
+
+        foreach($array as $val) {
+            if (!in_array($val[$key], $key_array)) {
+                $key_array[$i] = $val[$key];
+                $temp_array[$i] = $val;
+            }
+            $i++;
+        }
+        return $temp_array;
+    }
+
+    /**
+     * @return mixed
+     */
+    public function getPostcodeFromStore()
+    {
+        return str_replace('-', '',$this->_scopeConfig->getValue('general/store_information/postcode'));
+    }
+
+    /**
+     * @param $serviceId
+     * @return bool|mixed
+     */
+    public function loadServiceById($serviceId)
+    {
+        $allServices = json_decode($this->_scopeConfig->getValue('carriers/correios/servicesnames'));
+        $searchById = array_search($serviceId, array_column($allServices, 'id'));
+
+        if ($searchById === false) {
+            return false;
+        }
+
+        return $allServices[$searchById];
+    }
 }
