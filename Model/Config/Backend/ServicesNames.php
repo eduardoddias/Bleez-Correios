@@ -60,8 +60,7 @@ class ServicesNames extends \Magento\Framework\App\Config\Value
     {
         $value = $this->getValue();
         $value = json_decode($value, true);
-        $newArr = array_search('41068', array_column($value, 'id'));
-
+        
         if (is_array($value)) {
             $this->setValue($value);
         }
