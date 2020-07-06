@@ -37,9 +37,12 @@ class ServicesNames extends \Magento\Framework\App\Config\Value
         foreach($values as $k => $value){
 
             if(isset($value['name'])){
-
                 $result[$k]->name = $value['name'];
+            }
 
+            //Add column fee to save on database
+            if(isset($value['fee'])){
+                $result[$k]->fee = $value['fee'];
             }
 
         }

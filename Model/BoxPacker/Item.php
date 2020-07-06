@@ -2,6 +2,10 @@
 
 namespace Bleez\Correios\Model\BoxPacker;
 
+/**
+ * Class Item
+ * @package Bleez\Correios\Model\BoxPacker
+ */
 class Item implements \DVDoug\BoxPacker\Item {
 
     /**
@@ -40,6 +44,11 @@ class Item implements \DVDoug\BoxPacker\Item {
     private $volume;
 
     /**
+     * @var int
+     */
+    private $originPostcode;
+
+    /**
      * TestItem constructor.
      *
      * @param string $description
@@ -48,8 +57,9 @@ class Item implements \DVDoug\BoxPacker\Item {
      * @param int $depth
      * @param int $weight
      * @param int $keepFlat
+     * @param int $originPostcode
      */
-    public function __construct($description, $width, $length, $depth, $weight, $keepFlat)
+    public function __construct($description, $width, $length, $depth, $weight, $keepFlat, $originPostcode)
     {
         $this->description = $description;
         $this->width = $width;
@@ -57,6 +67,7 @@ class Item implements \DVDoug\BoxPacker\Item {
         $this->depth = $depth;
         $this->weight = $weight;
         $this->keepFlat = $keepFlat;
+        $this->originPostcode = $originPostcode;
 
         $this->volume = $this->width * $this->length * $this->depth;
     }
@@ -107,5 +118,13 @@ class Item implements \DVDoug\BoxPacker\Item {
     public function getKeepFlat(): bool
     {
         return $this->keepFlat;
+    }
+
+    /**
+     * @return int
+     */
+    public function getOriginPostcode(): int
+    {
+        return $this->originPostcode;
     }
 }

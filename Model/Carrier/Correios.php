@@ -196,8 +196,14 @@ class Correios extends \Magento\Shipping\Model\Carrier\AbstractCarrierOnline imp
                                 $shippingRates[$service->getServico()->getCodigo()]["prazo"] = 0;
                                 $shippingRates[$service->getServico()->getCodigo()]["nome"] = $service->getServico()->getNome();
                             }
+                            $loadedService = $this->_helper->loadServiceById($service->getServico()->getCodigo());
 
-                            $shippingRates[$service->getServico()->getCodigo()]["valor"] += $service->getValor();
+                            $priceService = $service->getValor();
+                            if (isset($loadedService->fee) && !empty($loadedService->fee)) {
+                                $priceService += $priceService * ($loadedService->fee / 100);
+                            }
+
+                            $shippingRates[$service->getServico()->getCodigo()]["valor"] += $priceService;
 
                             if ($this->_calculateShippingDays($service) > $shippingRates[$service->getServico()->getCodigo()]["prazo"]) {
                                 $shippingRates[$service->getServico()->getCodigo()]["prazo"] = $this->_calculateShippingDays($service);

@@ -38,6 +38,7 @@ class ServicesNames extends \Magento\Config\Block\System\Config\Form\Field\Field
         $this->addColumn('id', ['label' => __('ID'), 'size' => '6', 'disabled' => true]);
         $this->addColumn('service', ['label' => __('Serviço'), 'disabled' => true]);
         $this->addColumn('name', ['label' => __('Nome')]);
+        $this->addColumn('fee', ['label' => __('Taxa (%)')]); // Add column fee on grid
         $this->_addAfter = false;
         $this->_addButtonLabel = __('Add \Exception');
         parent::_construct();
@@ -74,6 +75,7 @@ class ServicesNames extends \Magento\Config\Block\System\Config\Form\Field\Field
         if(is_string($element->getValue())){
             $element->setValue(json_decode($element->getValue(), true));
         }
+
         if ($element->getValue() && is_array($element->getValue())) {
             foreach ($element->getValue() as $rowId => $row) {
                 $rowColumnValues = [];
@@ -83,6 +85,10 @@ class ServicesNames extends \Magento\Config\Block\System\Config\Form\Field\Field
                 }
                 $row['_id'] = $rowId;
                 $row['column_values'] = $rowColumnValues;
+                // If fee does not exists
+                if (!isset($row['fee'])) {
+                    $row['fee'] = '';
+                }
                 $result[$rowId] = new \Magento\Framework\DataObject($row);
                 $this->_prepareArrayRow($result[$rowId]);
             }
