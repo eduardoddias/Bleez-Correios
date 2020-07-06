@@ -250,6 +250,7 @@ class Correios extends \Magento\Shipping\Model\Carrier\AbstractCarrierOnline imp
         foreach ($quote->getAllVisibleItems() as $item) {
             $product = $objectManager->get('Magento\Catalog\Api\ProductRepositoryInterface')->get($item->getSku());
 
+            $originPostcode = (int)$product->getOriginPostcode();
             $altura = $product->getAltura();
             $comprimento = $product->getComprimento();
             $largura = $product->getLargura();
@@ -261,13 +262,19 @@ class Correios extends \Magento\Shipping\Model\Carrier\AbstractCarrierOnline imp
                 return $services;
             }
 
+            // If product does not have origin postcode, we take it from store.
+            if (!$originPostcode) {
+                $originPostcode = (int)$this->_helper->getPostcodeFromStore();
+            }
+
             for($i = 0; $i < $item->getQty(); $i++ ){
                 $pacotes[] = array(
                     "altura"      => $altura,
                     "largura"     => $largura,
                     "comprimento" => $comprimento,
-                    "peso"        => $peso * 100 //converto em g
-                );
+                    "peso"        => $peso * 100, //converto em g
+                    "origin_postcode" => $originPostcode
+            );
             }
         }
 
@@ -275,6 +282,7 @@ class Correios extends \Magento\Shipping\Model\Carrier\AbstractCarrierOnline imp
         if($this->getConfigData('divisao_frete') && $this->getConfigData('format') != 3){
             $numPacotes = count($pacotes);
 
+            $countPacote = 0;
             do {
                 $temPacotes = false;
 
@@ -296,8 +304,7 @@ class Correios extends \Magento\Shipping\Model\Carrier\AbstractCarrierOnline imp
                     if(!isset($pacotes[$i])) continue; //o pacote ja foi inserido
 
                     $itemsAnterior = clone $items;
-                    $items->insert(new Item('Item '.$i, $pacotes[$i]["altura"], $pacotes[$i]["largura"], $pacotes[$i]["comprimento"], ceil($pacotes[$i]["peso"]), false));
-
+                    $items->insert(new Item('Item '.$i, $pacotes[$i]["altura"], $pacotes[$i]["largura"], $pacotes[$i]["comprimento"], ceil($pacotes[$i]["peso"]), false, $pacotes[$i]['origin_postcode']));
                     $volumePacker = new VolumePacker(end($box), $items);
                     $packedBox = $volumePacker->pack();
 
@@ -329,8 +336,11 @@ class Correios extends \Magento\Shipping\Model\Carrier\AbstractCarrierOnline imp
                     unset($pacotes[$indexItem]);
                 }
 
-                if(count($pacotes) > 0)
+                if(count($pacotes) > 0) {
                     $temPacotes = true;
+                }
+
+                $countPacote++;
 
             } while($temPacotes);
         }
@@ -338,20 +348,27 @@ class Correios extends \Magento\Shipping\Model\Carrier\AbstractCarrierOnline imp
         if(isset($finalPackedBox)){
             $pacotes = array();
             foreach ($finalPackedBox as $b){
-                $pacotes[] = array(
-                    "altura"      => $b->getUsedWidth(),
-                    "largura"     => $b->getUsedLength(),
-                    "comprimento" => $b->getUsedDepth(),
-                    "peso"        => $b->getWeight() / 100
-                );
+                // Iterator on items because origin postcode
+                foreach ($b->getItems() as $item) {
+                    $pacotes[] = array(
+                        "altura" => $b->getUsedWidth(),
+                        "largura" => $b->getUsedLength(),
+                        "comprimento" => $b->getUsedDepth(),
+                        "peso" => $b->getWeight() / 100,
+                        "origin_postcode" => $item->getItem()->getOriginPostcode()
+                    );
+                }
             }
         }
 
-        $this->_qtdFretes = count($pacotes);
+        $this->_qtdFretes = $countPacote;
+
+        //Remove packages thats contains origin postcode duplicated
+        $pacotes = $this->_helper->unique_multidim_array($pacotes, 'origin_postcode');
 
         foreach ($pacotes as $pacote){
             $dimensions = $this->_createDimensionsNew($pacote["altura"], $pacote["largura"], $pacote["comprimento"]);
-            $services[] = $this->_getService($request, $dimensions, $pacote["peso"]);
+            $services[] = $this->_getService($request, $dimensions, $pacote["peso"], $pacote['origin_postcode']);
         }
 
         return $services;
@@ -363,10 +380,10 @@ class Correios extends \Magento\Shipping\Model\Carrier\AbstractCarrierOnline imp
      * @param \PhpSigep\Model\Dimensao $dimensions
      * @return \PhpSigep\Services\Result
      */
-    protected function _getService(RateRequest $request, Dimensao $dimensions, $peso){
+    protected function _getService(RateRequest $request, Dimensao $dimensions, $peso, $originPostcode){
         $params = new CalcPrecoPrazo();
         $params->setAccessData(new AccessDataHomologacao());
-        $params->setCepOrigem($request->getPostcode());
+        $params->setCepOrigem($originPostcode);
         $params->setCepDestino($request->getDestPostcode());
         $params->setServicosPostagem(ServicoDePostagem::getAll());
         $params->setAjustarDimensaoMinima(true);
