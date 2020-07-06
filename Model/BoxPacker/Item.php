@@ -127,4 +127,12 @@ class Item implements \DVDoug\BoxPacker\Item {
     {
         return $this->originPostcode;
     }
+
+    /**
+     * @inheritDoc
+     */
+    public function getVolume(): int
+    {
+        return $this->volume;
+    }
 }

@@ -162,4 +162,12 @@ class Box implements \DVDoug\BoxPacker\Box {
     {
         return $this->maxWeight;
     }
+
+    /**
+     * @inheritDoc
+     */
+    public function getInnerVolume(): int
+    {
+        return $this->innerVolume;
+    }
 }
