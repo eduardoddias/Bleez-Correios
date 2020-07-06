@@ -153,7 +153,10 @@ class Data {
      */
     public function getPostcodeFromStore()
     {
-        return str_replace('-', '',$this->_scopeConfig->getValue('general/store_information/postcode'));
+        $postCode = $this->_scopeConfig->getValue('general/store_information/postcode') ??
+            $this->_scopeConfig->getValue('shipping/origin/postcode');
+
+        return str_replace('-', '', $postCode);
     }
 
     /**

@@ -250,7 +250,7 @@ class Correios extends \Magento\Shipping\Model\Carrier\AbstractCarrierOnline imp
         foreach ($quote->getAllVisibleItems() as $item) {
             $product = $objectManager->get('Magento\Catalog\Api\ProductRepositoryInterface')->get($item->getSku());
 
-            $originPostcode = (int)$product->getOriginPostcode();
+            $originPostcode = (int) str_replace('-', '', $product->getOriginPostcode());
             $altura = $product->getAltura();
             $comprimento = $product->getComprimento();
             $largura = $product->getLargura();
