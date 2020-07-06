@@ -1,5 +1,5 @@
 {
-    "name": "eduardoddias/bleez=correios",
+    "name": "eduardoddias/bleez-correios",
     "description": "Modulo correios magento 2",
     "type": "magento2-module",
     "version": "0.0.3",
