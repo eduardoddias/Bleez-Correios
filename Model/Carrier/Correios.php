@@ -242,7 +242,8 @@ class Correios extends \Magento\Shipping\Model\Carrier\AbstractCarrierOnline imp
     }
 
     protected function _getServices($request, $quote){
-        $services = array();
+        $services = [];
+        $pacotesAux = [];
         $limite = json_decode($this->_helper->getLimitSizes(), true);
 
         $objectManager = \Magento\Framework\App\ObjectManager::getInstance();
@@ -251,12 +252,12 @@ class Correios extends \Magento\Shipping\Model\Carrier\AbstractCarrierOnline imp
             $product = $objectManager->get('Magento\Catalog\Api\ProductRepositoryInterface')->get($item->getSku());
 
             $originPostcode = (int) str_replace('-', '', $product->getOriginPostcode());
-            $altura = $product->getAltura();
-            $comprimento = $product->getComprimento();
-            $largura = $product->getLargura();
-            $peso = $product->getWeight();
+            $altura = 14;
+            $comprimento = 50;
+            $largura = 40;
+            $peso = isset($pacotesAux[$originPostcode])?$pacotesAux[$originPostcode]['peso'] : 0;
 
-            if(!$altura || !$comprimento || !$largura || !$peso) return [];
+            if(!$altura || !$comprimento || !$largura) return [];
 
             if(!$this->_verificaTamanho($altura, $largura, $comprimento, $limite) || !$this->_verificaPeso($peso)){
                 return $services;
@@ -267,15 +268,21 @@ class Correios extends \Magento\Shipping\Model\Carrier\AbstractCarrierOnline imp
                 $originPostcode = (int)$this->_helper->getPostcodeFromStore();
             }
 
-            for($i = 0; $i < $item->getQty(); $i++ ){
-                $pacotes[] = array(
-                    "altura"      => $altura,
-                    "largura"     => $largura,
-                    "comprimento" => $comprimento,
-                    "peso"        => $peso * 100, //converto em g
-                    "origin_postcode" => $originPostcode
+            $pacotesAux[$originPostcode] = array(
+                "altura"      => $altura,
+                "largura"     => $largura,
+                "comprimento" => $comprimento,
+                "peso"        => $peso + (24 * $item->getQty()),
+                "origin_postcode" => $originPostcode
             );
-            }
+        }
+
+        $i = 0;
+        $pacotes = [];
+
+        foreach ($pacotesAux as $aux) {
+            $pacotes[$i] = $aux;
+            $i++;
         }
 
         //Divisão do frete
